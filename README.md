@@ -3,7 +3,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/fredrikmwold/git-worktree-tui.svg)](https://pkg.go.dev/github.com/fredrikmwold/git-worktree-tui)
 [![Release](https://img.shields.io/github/v/release/FredrikMWold/git-worktree-tui?sort=semver)](https://github.com/FredrikMWold/git-worktree-tui/releases)
 
-A minimal, keyboard-first TUI for Git worktrees built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). List, create, open in your editor, and delete worktrees — without leaving your terminal.
+A minimal, keyboard-first TUI for Git worktrees built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). List, create, open in your editor, and delete worktrees.
 
 ![Demo](./demo.gif)
 
