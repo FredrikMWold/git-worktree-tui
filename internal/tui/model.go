@@ -49,6 +49,11 @@ type model struct {
 	confirmMsg string
 	selected   git.Worktree
 	branchDel  *branchDelegate
+	// Inline delete confirmation state for main list
+	confirmIndex int // -1 when not confirming; otherwise index in m.list
+	confirmPrev  item
+	// App frame style (rounded mauve border around the entire app)
+	frame lipgloss.Style
 }
 
 // refreshMsg was previously used; keep reserved if needed in future
@@ -102,7 +107,12 @@ func initialModel() model {
 	in.PlaceholderStyle = lipgloss.NewStyle().Foreground(theme.Surface2)
 	in.Cursor.Style = lipgloss.NewStyle().Foreground(theme.Mauve)
 
-	m := model{state: stateList, list: li, input: in}
+	m := model{state: stateList, list: li, input: in, confirmIndex: -1}
+
+	// Create a rounded mauve border frame for the whole app
+	m.frame = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.Mauve)
 
 	// Branch picker with custom delegate supporting inline editing for the add item
 	brBase := list.NewDefaultDelegate()
@@ -196,14 +206,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		// The lists render their own titles; give them the full height
-		m.list.SetSize(msg.Width, msg.Height)
-		m.branches.SetSize(msg.Width, msg.Height)
+		// Account for outer frame border (1 char each side)
+		// Ensure the frame spans (terminal width - 2) to avoid right-edge overflow
+		fw := msg.Width - 2
+		if fw < 0 {
+			fw = 0
+		}
+		m.frame = m.frame.Width(fw)
+		// Inner width accounts for left+right border (2) plus the extra 2-col adjustment
+		innerW := msg.Width - 4
+		innerH := msg.Height - 2
+		if innerW < 0 {
+			innerW = 0
+		}
+		if innerH < 0 {
+			innerH = 0
+		}
+		m.list.SetSize(innerW, innerH)
+		m.branches.SetSize(innerW, innerH)
 		// Size the inline editor to fit the list content width with a small margin
-		w := msg.Width - 6
+		w := innerW - 6
 		if w < 10 {
 			w = 10
 		}
 		m.input.Width = w
+
+		// Help line wrapping control: always show help; use short vs full based on width and constrain width
+		m.list.SetShowHelp(true)
+		m.branches.SetShowHelp(true)
+		// Constrain help style width to inner content width to avoid wrapping
+		ls := m.list.Styles
+		ls.HelpStyle = ls.HelpStyle.Foreground(theme.Surface2).MaxWidth(innerW)
+		m.list.Styles = ls
+		bs := m.branches.Styles
+		bs.HelpStyle = bs.HelpStyle.Foreground(theme.Surface2).MaxWidth(innerW)
+		m.branches.Styles = bs
 		return m, nil
 	case editorDoneMsg:
 		// Exit the app after the editor process completes
@@ -244,6 +281,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items = append(items, item{title: t, desc: d, wt: wt})
 		}
 		m.list.SetItems(items)
+		// Clear any pending inline delete confirmation
+		m.confirmIndex = -1
 		return m, nil
 	case loadedBranchesMsg:
 		if msg.err != nil {
@@ -282,12 +321,46 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch k {
 			case "q", "ctrl+c":
 				return m, tea.Quit
+			case "esc":
+				// Cancel inline delete confirmation if active
+				if m.confirmIndex != -1 {
+					// restore previous item content
+					items := m.list.Items()
+					if idx := m.confirmIndex; idx >= 0 && idx < len(items) {
+						items[idx] = m.confirmPrev
+						m.list.SetItems(items)
+					}
+					m.confirmIndex = -1
+					return m, nil
+				}
+				return m, nil
 			case "r":
+				m.confirmIndex = -1
 				return m, loadWorktrees
 			case "a":
 				m.state = stateAddPick
 				return m, loadBranches
 			case "enter":
+				// If confirming delete inline, Enter = Yes
+				if m.confirmIndex != -1 && m.list.Index() == m.confirmIndex {
+					if m.selected.Path != "" {
+						if err := git.RemoveWorktree(m.selected.Path, true); err != nil {
+							// restore and show error
+							items := m.list.Items()
+							if idx := m.confirmIndex; idx >= 0 && idx < len(items) {
+								items[idx] = m.confirmPrev
+								m.list.SetItems(items)
+							}
+							m.confirmIndex = -1
+							return m, m.list.NewStatusMessage(fmt.Sprintf("Error: %v", err))
+						}
+						// cleared by loadWorktrees
+						m.confirmIndex = -1
+						name := filepath.Base(m.selected.Path)
+						return m, tea.Batch(loadWorktrees, m.list.NewStatusMessage(fmt.Sprintf("Removed worktree %s", name)))
+					}
+					return m, nil
+				}
 				if it, ok := m.list.SelectedItem().(item); ok {
 					if it.isAdd {
 						m.state = stateAddPick
@@ -310,9 +383,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if it.wt.IsMain {
 						return m, m.list.NewStatusMessage("Cannot delete main worktree")
 					}
+					// If another confirmation is active, restore it first
+					if m.confirmIndex != -1 {
+						items := m.list.Items()
+						if idx := m.confirmIndex; idx >= 0 && idx < len(items) {
+							items[idx] = m.confirmPrev
+							m.list.SetItems(items)
+						}
+						m.confirmIndex = -1
+					}
 					m.selected = it.wt
-					m.confirmMsg = fmt.Sprintf("Remove worktree %s? enter=Yes esc=No", it.wt.Path)
-					m.state = stateConfirmDelete
+					// Mutate the selected list item to show inline confirmation
+					idx := m.list.Index()
+					m.confirmIndex = idx
+					m.confirmPrev = it
+					items := m.list.Items()
+					// Build confirmation text on title; keep description for Yes/No
+					confirmItem := it
+					confirmItem.title = fmt.Sprintf("Are you sure you want to delete: %s", it.title)
+					confirmItem.desc = "Yes: Enter    No: Esc"
+					items[idx] = confirmItem
+					m.list.SetItems(items)
 				}
 				return m, nil
 			}
@@ -342,7 +433,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.input.Blur()
 					m.resetAddItemTitle()
 					m.state = stateList
-					return m, tea.Batch(loadWorktrees, m.list.NewStatusMessage(fmt.Sprintf("Created worktree at %s for new branch %s", path, branch)))
+					name := filepath.Base(path)
+					return m, tea.Batch(loadWorktrees, m.list.NewStatusMessage(fmt.Sprintf("Created worktree %s", name)))
 				}
 				var cmd tea.Cmd
 				m.input, cmd = m.input.Update(msg)
@@ -388,7 +480,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, m.branches.NewStatusMessage(fmt.Sprintf("Error: %v", err))
 					}
 					m.state = stateList
-					return m, tea.Batch(loadWorktrees, m.list.NewStatusMessage(fmt.Sprintf("Created worktree at %s for %s", path, branchName)))
+					name := filepath.Base(path)
+					return m, tea.Batch(loadWorktrees, m.list.NewStatusMessage(fmt.Sprintf("Created worktree %s", name)))
 				}
 				return m, nil
 			}
@@ -412,7 +505,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.list.NewStatusMessage(fmt.Sprintf("Error: %v", err))
 				}
 				m.state = stateList
-				return m, tea.Batch(loadWorktrees, m.list.NewStatusMessage(fmt.Sprintf("Created worktree at %s for new branch %s", path, branch)))
+				name := filepath.Base(path)
+				return m, tea.Batch(loadWorktrees, m.list.NewStatusMessage(fmt.Sprintf("Created worktree %s", name)))
 			}
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
@@ -428,7 +522,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.list.NewStatusMessage(fmt.Sprintf("Error: %v", err))
 				}
 				m.state = stateList
-				return m, tea.Batch(loadWorktrees, m.list.NewStatusMessage(fmt.Sprintf("Removed worktree %s", m.selected.Path)))
+				name := filepath.Base(m.selected.Path)
+				return m, tea.Batch(loadWorktrees, m.list.NewStatusMessage(fmt.Sprintf("Removed worktree %s", name)))
 			}
 		}
 	}
@@ -438,13 +533,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	switch m.state {
 	case stateList:
-		return m.list.View()
+		return m.frame.Render(m.list.View())
 	case stateAddPick:
-		return m.branches.View()
+		return m.frame.Render(m.branches.View())
 	case stateAddNewInput:
-		return m.input.View() + "\n"
+		return m.frame.Render(m.input.View())
 	case stateConfirmDelete:
-		return m.confirmMsg + "\n"
+		return m.frame.Render(m.confirmMsg)
 	}
 	return ""
 }
