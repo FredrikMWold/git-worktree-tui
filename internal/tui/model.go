@@ -289,23 +289,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.branches.NewStatusMessage(fmt.Sprintf("Error: %v", msg.err))
 		}
 		items := make([]list.Item, 0, len(msg.branches)+1)
-		labelType := func(s string) string { return lipgloss.NewStyle().Foreground(theme.Peach).Render(s) }
-		labelRemote := func(s string) string { return lipgloss.NewStyle().Foreground(theme.Sky).Render(s) }
-		value := func(s string) string { return s }
+		labelTracking := func(s string) string { return lipgloss.NewStyle().Foreground(theme.Blue).Render(s) }
+		gray := func(s string) string { return lipgloss.NewStyle().Foreground(theme.Surface1).Render(s) }
 		// Prepend synthetic option to create a new branch
 		items = append(items, item{title: "[+] Create new branch", desc: "Type a new branch name", isAdd: true})
 		for _, b := range msg.branches {
-			// Title: branch name; Desc: labeled status
-			var segs []string
-			if b.IsRemote {
-				segs = append(segs, labelType("Type:")+" "+value("remote"))
-				if b.Remote != "" {
-					segs = append(segs, labelRemote("Remote:")+" "+value(b.Remote))
+			// Title: branch name; Desc: show tracking remote/branch for locals with upstream,
+			// otherwise show gray "No remote" for locals without upstream.
+			desc := ""
+			if !b.IsRemote {
+				if b.HasUpstream && b.Upstream != "" {
+					desc = labelTracking("Tracking:") + " " + b.Upstream
+				} else {
+					desc = gray("No remote")
 				}
-			} else {
-				segs = append(segs, labelType("Type:")+" "+value("local"))
 			}
-			desc := strings.Join(segs, "  ")
 			items = append(items, item{title: b.Name, desc: desc, br: b})
 		}
 		m.branches.SetItems(items)

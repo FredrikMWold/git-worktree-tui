@@ -106,24 +106,46 @@ type Branch struct {
 	IsRemote  bool
 	Remote    string // e.g. "origin" if remote
 	RemoteRef string // e.g. "origin/feature"
+	// Upstream tracking for local branches
+	HasUpstream    bool
+	Upstream       string // short, e.g. "origin/feature"
+	UpstreamRemote string // e.g. "origin"
 }
 
 // ListBranchesDetailed returns local and remote branches, with local first.
 func ListBranchesDetailed() ([]Branch, error) {
 	var branches []Branch
-	// Local branches
-	outLocal, err := runGit("for-each-ref", "--format=%(refname:short)", "refs/heads")
+	seen := map[string]bool{}
+	// Local branches with upstream info, sorted by latest commit date
+	outLocal, err := runGit("for-each-ref", "--sort=-committerdate", "--format=%(refname:short)|%(upstream:short)", "refs/heads")
 	if err == nil {
 		for _, l := range strings.Split(strings.TrimSpace(outLocal), "\n") {
 			l = strings.TrimSpace(l)
 			if l == "" {
 				continue
 			}
-			branches = append(branches, Branch{Name: l})
+			name := l
+			upstreamShort := ""
+			if strings.Contains(l, "|") {
+				parts := strings.SplitN(l, "|", 2)
+				name = strings.TrimSpace(parts[0])
+				upstreamShort = strings.TrimSpace(parts[1])
+			}
+			br := Branch{Name: name}
+			if upstreamShort != "" {
+				br.HasUpstream = true
+				br.Upstream = upstreamShort
+				upParts := strings.SplitN(upstreamShort, "/", 2)
+				if len(upParts) >= 1 {
+					br.UpstreamRemote = upParts[0]
+				}
+			}
+			branches = append(branches, br)
+			seen[name] = true
 		}
 	}
-	// Remote branches (skip HEAD pointers like origin/HEAD)
-	outRemote, err := runGit("for-each-ref", "--format=%(refname:short)", "refs/remotes")
+	// Remote branches (skip HEAD pointers like origin/HEAD), sorted by latest commit date
+	outRemote, err := runGit("for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/remotes")
 	if err == nil {
 		for _, l := range strings.Split(strings.TrimSpace(outRemote), "\n") {
 			l = strings.TrimSpace(l)
@@ -140,7 +162,12 @@ func ListBranchesDetailed() ([]Branch, error) {
 			}
 			remote := parts[0]
 			name := parts[1]
+			// If a local branch with the same short name exists, skip the remote to avoid duplicates
+			if seen[name] {
+				continue
+			}
 			branches = append(branches, Branch{Name: name, IsRemote: true, Remote: remote, RemoteRef: l})
+			seen[name] = true
 		}
 	}
 	return branches, nil
