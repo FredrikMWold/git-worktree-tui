@@ -84,7 +84,8 @@ func ListWorktrees() ([]Worktree, error) {
 
 // ListBranches returns local branches without the leading '*'
 func ListBranches() ([]string, error) {
-	out, err := runGit("branch", "--format", "%(refname:short)")
+	// Sort by most recent committer date
+	out, err := runGit("branch", "--sort=-committerdate", "--format", "%(refname:short)")
 	if err != nil {
 		return nil, err
 	}
@@ -111,8 +112,8 @@ type Branch struct {
 // ListBranchesDetailed returns local and remote branches, with local first.
 func ListBranchesDetailed() ([]Branch, error) {
 	var branches []Branch
-	// Local branches
-	outLocal, err := runGit("for-each-ref", "--format=%(refname:short)", "refs/heads")
+	// Local branches, sorted by most recent committer date
+	outLocal, err := runGit("for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads")
 	if err == nil {
 		for _, l := range strings.Split(strings.TrimSpace(outLocal), "\n") {
 			l = strings.TrimSpace(l)
@@ -122,8 +123,8 @@ func ListBranchesDetailed() ([]Branch, error) {
 			branches = append(branches, Branch{Name: l})
 		}
 	}
-	// Remote branches (skip HEAD pointers like origin/HEAD)
-	outRemote, err := runGit("for-each-ref", "--format=%(refname:short)", "refs/remotes")
+	// Remote branches (skip HEAD pointers like origin/HEAD), sorted by most recent committer date
+	outRemote, err := runGit("for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/remotes")
 	if err == nil {
 		for _, l := range strings.Split(strings.TrimSpace(outRemote), "\n") {
 			l = strings.TrimSpace(l)
