@@ -107,20 +107,31 @@ type Branch struct {
 	IsRemote  bool
 	Remote    string // e.g. "origin" if remote
 	RemoteRef string // e.g. "origin/feature"
+	// For local branches, the upstream they're tracking (e.g. "origin/master"). Empty if none.
+	Upstream string
 }
 
 // ListBranchesDetailed returns local and remote branches, with local first.
 func ListBranchesDetailed() ([]Branch, error) {
-	var branches []Branch
-	// Local branches, sorted by most recent committer date
-	outLocal, err := runGit("for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads")
+	// Collect locals and remotes separately
+	var locals []Branch
+	var remotes []Branch
+
+	// Local branches, sorted by most recent committer date, include upstream tracking info
+	// Format: "<name>\t<upstream>" where upstream is short (like origin/master) or empty
+	outLocal, err := runGit("for-each-ref", "--sort=-committerdate", "--format=%(refname:short)\t%(upstream:short)", "refs/heads")
 	if err == nil {
 		for _, l := range strings.Split(strings.TrimSpace(outLocal), "\n") {
-			l = strings.TrimSpace(l)
-			if l == "" {
+			if strings.TrimSpace(l) == "" {
 				continue
 			}
-			branches = append(branches, Branch{Name: l})
+			name := l
+			upstream := ""
+			if tab := strings.Index(l, "\t"); tab != -1 {
+				name = strings.TrimSpace(l[:tab])
+				upstream = strings.TrimSpace(l[tab+1:])
+			}
+			locals = append(locals, Branch{Name: name, Upstream: upstream})
 		}
 	}
 	// Remote branches (skip HEAD pointers like origin/HEAD), sorted by most recent committer date
@@ -141,10 +152,26 @@ func ListBranchesDetailed() ([]Branch, error) {
 			}
 			remote := parts[0]
 			name := parts[1]
-			branches = append(branches, Branch{Name: name, IsRemote: true, Remote: remote, RemoteRef: l})
+			remotes = append(remotes, Branch{Name: name, IsRemote: true, Remote: remote, RemoteRef: l})
 		}
 	}
-	return branches, nil
+
+	// Deduplicate: prefer locals; include at most one remote per short name when no local exists
+	final := make([]Branch, 0, len(locals)+len(remotes))
+	seen := make(map[string]struct{})
+	for _, b := range locals {
+		final = append(final, b)
+		seen[b.Name] = struct{}{}
+	}
+	for _, b := range remotes {
+		if _, ok := seen[b.Name]; ok {
+			continue // local exists; skip remote duplicate
+		}
+		// Ensure only one remote per short name
+		seen[b.Name] = struct{}{}
+		final = append(final, b)
+	}
+	return final, nil
 }
 
 // CreateWorktreeFromRef creates a new branch from a given ref and adds a worktree.

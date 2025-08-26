@@ -288,23 +288,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.branches.NewStatusMessage(fmt.Sprintf("Error: %v", msg.err))
 		}
 		items := make([]list.Item, 0, len(msg.branches)+1)
-		labelType := func(s string) string { return lipgloss.NewStyle().Foreground(theme.Peach).Render(s) }
-		labelRemote := func(s string) string { return lipgloss.NewStyle().Foreground(theme.Sky).Render(s) }
+		labelTrack := func(s string) string { return lipgloss.NewStyle().Foreground(theme.Blue).Render(s) }
+		labelMuted := func(s string) string { return lipgloss.NewStyle().Foreground(theme.Surface1).Render(s) }
 		value := func(s string) string { return s }
 		// Prepend synthetic option to create a new branch
 		items = append(items, item{title: "[+] Create new branch", desc: "Type a new branch name", isAdd: true})
 		for _, b := range msg.branches {
-			// Title: branch name; Desc: labeled status
-			var segs []string
-			if b.IsRemote {
-				segs = append(segs, labelType("Type:")+" "+value("remote"))
-				if b.Remote != "" {
-					segs = append(segs, labelRemote("Remote:")+" "+value(b.Remote))
+			// Title: branch name; Desc: show tracking info for locals; gray 'no remote' if none
+			desc := ""
+			if !b.IsRemote {
+				up := strings.TrimSpace(b.Upstream)
+				if up == "" {
+					desc = labelMuted("No remote")
+				} else {
+					desc = labelTrack("Tracking:") + " " + value(up)
 				}
-			} else {
-				segs = append(segs, labelType("Type:")+" "+value("local"))
 			}
-			desc := strings.Join(segs, "  ")
 			items = append(items, item{title: b.Name, desc: desc, br: b})
 		}
 		m.branches.SetItems(items)
