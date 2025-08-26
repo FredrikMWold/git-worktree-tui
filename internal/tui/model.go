@@ -468,13 +468,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					b := it.br
 					branchName := b.Name
 					path := git.DefaultWorktreeDir(branchName)
-					var err error
-					if b.IsRemote {
-						err = git.CreateWorktreeFromRef(branchName, path, b.RemoteRef)
-					} else {
-						err = git.CreateWorktree(branchName, path, false)
-					}
-					if err != nil {
+					if err := git.CreateWorktree(branchName, path, false); err != nil {
 						return m, m.branches.NewStatusMessage(fmt.Sprintf("Error: %v", err))
 					}
 					m.state = stateList
